@@ -191,7 +191,7 @@ def Toast(title: str, message=None, **kwargs) -> None:
     return
 
 default_finish = lambda p, pp: None
-def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=Gtk.Picture, mimetype=None, play=True, finish_func=default_finish, **kwargs) -> Gtk.Widget:
+def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=Gtk.Picture, mimetype=None, play=True, finish_func=default_finish, media=False, **kwargs) -> Gtk.Widget:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
@@ -230,7 +230,7 @@ def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=G
             revealer.controls = parent.controls
             parent.add_overlay(revealer)
         if play == True: picture.media.set_properties(playing=True, loop=True)
-    elif mimetype.startswith("image") or mimetype.endswith("zip"): app.thread.submit(load_image, picture, uri, mimetype, finish_func)
+    elif mimetype.startswith("image") or mimetype.endswith("zip"): app.thread.submit(load_image, picture, uri, mimetype, finish_func, media)
     if parent_type is Gtk.Overlay:
         shortcuts = Gtk.ShortcutController()
         parent.add_controller(shortcuts)
@@ -246,7 +246,7 @@ def media_play_pause(parent: Gtk.Widget, *_) -> None:
     if isinstance(parent.get_child(), Gtk.ScrolledWindow):
         child = child.get_child().get_child()
     child.get_paintable().set_playing(False if child.get_paintable().get_playing() else True)
-def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype=None, finish_func=default_finish) -> None:
+def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype=None, finish_func=default_finish, media=False) -> None:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
@@ -270,8 +270,14 @@ def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype=None, 
         texture = GlyGtk4.frame_get_texture(frame)
         picture.height = image.get_height() / image.get_width()
         if frame.get_delay() > 0:
-            picture.image = image
-            picture.connect("map", media_image_animate)
+            if media:
+                picture.media = Gtk.MediaFile.new_for_file(uri)
+                picture.sig = picture.media.connect("invalidate-contents", media_finish, (picture, finish_func))
+                picture.media.set_properties(playing=True, loop=True)
+                return
+            else:
+                picture.image = image
+                picture.connect("map", media_image_animate)
         GLib.idle_add(picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image, texture)
         GLib.idle_add(picture.remove_css_class, "spinner")
         finish_func(picture, texture)
@@ -289,7 +295,7 @@ def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype=None, 
 def media_finish(paintable: Gtk.MediaFile, data: tuple) -> None:
     paintable.disconnect(data[0].sig)
     GLib.idle_add(data[0].remove_css_class, "spinner")
-    GLib.idle_add(data[0].set_paintable, paintable)
+    GLib.idle_add(data[0].set_paintable if hasattr(data[0], "set_paintable") else data[0].set_custom_image, paintable)
     data[1](data[0], paintable)
     del data[0].media
 def media_image_animate(p: Gtk.Picture, *_) -> None:
