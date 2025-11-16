@@ -4,7 +4,7 @@ from marshal import loads as marshal
 from marshal import dumps as marshal_string
 from operator import itemgetter
 from concurrent.futures import ThreadPoolExecutor
-from xml.etree.ElementTree import parse as xml
+from xml.etree.ElementTree import fromstring as xml
 from xml.etree.ElementTree import tostring as xml_string
 from zipfile import ZipFile
 
@@ -147,7 +147,7 @@ def Action(name: str, callback=None, accels="", stateful=None) -> Gio.Action:
     return action
 
 def About(metainfo: str) -> Adw.AboutDialog:
-    content = xml(metainfo).getroot()
+    content = xml(Gio.File.new_for_path(metainfo).load_contents()[1].decode("utf-8"))
     return Adw.AboutDialog(application_name=content.findtext("./name"), issue_url=content.findtext("./url[@type='bugtracker']"), website=content.findtext("./url[@type='homepage']"), application_icon=content.findtext("./id") + "-symbolic", license_type=getattr(Gtk.License, tuple(it for it in dir(Gtk.License) if it.startswith(content.findtext("./project_license")))[0]), developer_name=content.findtext("./developer/name"), version=content.find("./releases/release").attrib["version"], release_notes=(xml_string(content.find("./releases/release/description"), encoding="unicode").replace("</description>", "").replace("<description>", "")))
 
 def Shortcuts(shortcuts: dict) -> Adw.ShortcutsDialog:
@@ -187,7 +187,7 @@ def Toast(title: str, message=None, **kwargs) -> None:
     if message: print(message)
     else: print(title)
     toast_overlay = app.window.get_visible_dialog() if isinstance(app.window.get_visible_dialog(), Adw.PreferencesDialog) else app.window.get_content()
-    GLib.idle_add(toast_overlay.add_toast, Adw.Toast(title=title, **kwargs))
+    GLib.idle_add(toast_overlay.add_toast, Adw.Toast(title=title, use_markup=False, **kwargs))
     return
 
 default_finish = lambda p, pp: None
