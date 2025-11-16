@@ -191,7 +191,7 @@ def Toast(title: str, message=None, **kwargs) -> None:
     return
 
 default_finish = lambda p, pp: None
-def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=Gtk.Picture, mimetype=None, play=True, finish_func=default_finish, media=False, **kwargs) -> Gtk.Widget:
+def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=Gtk.Picture, mimetype="", play=True, finish_func=default_finish, media=False, **kwargs) -> Gtk.Widget:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
@@ -201,7 +201,6 @@ def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=G
     if not pargs and parent_type is Gtk.Overlay:
         pargs = {"css_name": "media", "overflow": Gtk.Overflow.HIDDEN}
     parent = parent_type(**pargs)
-    if not uri: return parent
     if mimetype.startswith("audio"):
         controls = Gtk.MediaControls(hexpand=True, media_stream=Gtk.MediaFile.new_for_file(uri), css_classes=("toolbar", "card"))
         for i in ("time_label", "duration_label"): GLib.idle_add(controls.get_template_child(Gtk.MediaControls, i).unparent)
@@ -217,8 +216,9 @@ def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=G
     if parent_type is Gtk.Overlay:
         parent.event = Gtk.EventControllerMotion()
         parent.add_controller(parent.event)
-    GLib.idle_add(picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image, app.spinner)
-    GLib.idle_add(picture.add_css_class, "spinner")
+    if uri and mimetype or isinstance(picture, Gtk.Picture) and not "paintable" in pargs:
+        GLib.idle_add(picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image, app.spinner)
+        GLib.idle_add(picture.add_css_class, "spinner")
     if mimetype.startswith("video"):
         picture.media = Gtk.MediaFile.new_for_file(uri)
         picture.sig = picture.media.connect("invalidate-contents", media_finish, (picture, finish_func))
@@ -246,7 +246,7 @@ def media_play_pause(parent: Gtk.Widget, *_) -> None:
     if isinstance(parent.get_child(), Gtk.ScrolledWindow):
         child = child.get_child().get_child()
     child.get_paintable().set_playing(False if child.get_paintable().get_playing() else True)
-def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype=None, finish_func=default_finish, media=False) -> None:
+def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype="", finish_func=default_finish, media=False) -> None:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
