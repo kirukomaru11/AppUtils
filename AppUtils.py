@@ -1,5 +1,9 @@
 import os
+from re import compile as regex
 from math import sqrt
+from math import radians
+from math import cos
+from math import sin
 from marshal import loads as marshal
 from marshal import dumps as marshal_string
 from operator import itemgetter
@@ -23,22 +27,34 @@ except:
     print("Glycin not available")
 
 css = Gtk.CssProvider.new()
-css.load_from_string("""
+css.style = """
 masonrybox view { border-spacing: 10px; margin: 10px; }
 masonrybox view > column { border-spacing: 10px; }
 .entry-dialog entry text { margin: 12px 5px 12px 5px; }
-.entry-dialog textview { background: color-mix(in srgb, currentColor 8%, transparent); border-radius: 10px; padding: 12px; font-size: 16px; }
+.entry-dialog textview { background: color-mix(in srgb, var(--window-fg-color) 8%, transparent); border-radius: 10px; padding: 12px; font-size: 16px; }
 .entry-dialog .message-area  { border-spacing: 16px; }
-media, masonrybox picture, media picture { border-radius: 13px; }
+masonrybox media, masonrybox picture, media picture { border-radius: 13px; }
 media controls.toolbar.card { background: rgba(0, 0, 0, 0.3); color: white; margin: 6px; }
 controls.toolbar.card box > scale { padding: 0px; }
 .tagrow wrap-box { padding: 4px; }
 .tagrow box { padding: 12px;  border-spacing: 6px; }
-.tagrow tag { background: color-mix(in srgb, currentColor 10%, transparent); color: inherit; border-radius: 99px; padding-left:10px; }
+.tagrow tag { background: color-mix(in srgb, var(--window-fg-color) 10%, transparent); color: inherit; border-radius: 99px; padding-left:10px; }
 .tagrow tag button { margin: 3px; min-width: 0; min-height: 0; padding: 6px; }
-.tagrow pinnedtag { background: color-mix(in srgb, currentColor 10%, transparent); color: inherit; border-radius: 99px; padding: 6px 12px 6px 12px; }
+.tagrow pinnedtag { background: color-mix(in srgb, var(--window-fg-color) 10%, transparent); color: inherit; border-radius: 99px; padding: 6px 12px 6px 12px; }
 row.destructive-action { background: var(--destructive-bg-color); color: white; }
-""")
+calendar-chart day, calendar-chart pad, calendar-chart empty { min-height: 16px; min-width: 16px; margin: 2px; border-radius: 4px; }
+calendar-chart day { background: var(--accent-bg-color); }
+calendar-chart empty { background: var(--shade-color); }
+calendar-chart { border-spacing: 10px; }
+calendar-chart > box { border-spacing: 6px; }
+bar-chart bar { background: var(--accent-color); min-width: 30px; }
+bar-chart { border-spacing: 16px; }
+bar-chart > box { border-spacing: 4px; }
+bar-chart bar:nth-child(even) { opacity: 0.5; }
+donut-chart picture { margin-left: 12px; }
+donut-chart legend { border-spacing: 6px; }
+"""
+css.load_from_string(css.style)
 Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_USER)
 
 class TagRow(Adw.PreferencesRow):
@@ -103,9 +119,8 @@ def App(args=None, style=None, shortcuts={}, metainfo="", activate=lambda a: (a.
         exit()
     Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.path.join(GLib.get_system_data_dirs()[0], app.get_application_id()))
     if style:
-        css = Gtk.CssProvider.new()
-        css.load_from_string(style)
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        css.style += "\n" + style
+        css.load_from_string(css.style)
     app.about = About(metainfo if metainfo else GLib.build_filenamev((GLib.get_system_data_dirs()[0], "metainfo", f"{app.get_application_id()}.metainfo.xml")))
     app.session = Soup.Session(user_agent=app.about.get_application_name(), max_conns_per_host=10)
     app.name = app.about.get_application_name()
@@ -190,8 +205,20 @@ def Toast(title: str, message=None, **kwargs) -> None:
     GLib.idle_add(toast_overlay.add_toast, Adw.Toast(title=title, use_markup=False, **kwargs))
     return
 
+def zoom_media(e: Gtk.EventControllerScroll, x: float, y: float) -> bool:
+    e.zoom = max(-(y) + e.zoom, 0)
+    css.style = e.re.sub("", css.style)
+    if e.zoom == 0:
+        w = h = 0
+    else:
+        w = int(e.get_widget().get_child().get_child().get_paintable().get_intrinsic_width() * (e.zoom * 0.1))
+        h = int(e.get_widget().get_child().get_child().get_paintable().get_intrinsic_height() * (e.zoom * 0.1))
+    css.style = css.style + f"\n.{e.get_widget().get_css_classes()[0]} picture {{min-width:{w}px; min-height:{h}px;}}\n"
+    GLib.idle_add(css.load_from_string, css.style)
+    return True
+
 default_finish = lambda p, pp: None
-def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=Gtk.Picture, mimetype="", play=True, finish_func=default_finish, media=False, **kwargs) -> Gtk.Widget:
+def Media(uri: Gio.File | None | str, child=None, scrollable=False, parent_type=Gtk.Picture, mimetype="", play=True, finish_func=default_finish, media=False, **kwargs) -> Gtk.Widget:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
@@ -208,10 +235,22 @@ def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=G
     picture = parent if (parent_type is Adw.Avatar or parent_type is Gtk.Picture) else child if child else Gtk.Picture(**cargs)
     if parent_type is Gtk.Picture or parent_type is Adw.Avatar:
         parent = picture
-    elif not scrollable == None and parent_type is Gtk.Overlay:
-        scrolled = Gtk.ScrolledWindow(child=Gtk.Viewport(child=picture, vscroll_policy=scrollable), propagate_natural_height=True, propagate_natural_width=True)
-        scrolled.get_child().bind_property("vscroll-policy", scrolled.get_child(), "hscroll-policy", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE)
+    elif scrollable and parent_type is Gtk.Overlay:
+        scrolled = Gtk.ScrolledWindow(css_classes=("media-" + str(picture).split(" ")[-1].strip(")>"),), child=Gtk.Viewport(child=picture), propagate_natural_height=True, propagate_natural_width=True)
         parent.set_child(scrolled)
+        for i in tuple(scrolled.observe_controllers()):
+            if type(i) in (Gtk.GesturePan, Gtk.GestureSwipe, Gtk.GestureLongPress, Gtk.EventControllerScroll):
+                i.set_propagation_phase(Gtk.PropagationPhase.NONE)
+                if hasattr(i, "set_button"): i.set_button(1000)
+            if isinstance(i, Gtk.GestureDrag):
+                i.set_touch_only(False)
+                i.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+                i.connect("drag-begin", lambda d, *_: d.get_widget().get_root().get_surface().set_cursor(Gdk.Cursor.new_from_name("grabbing")) if (d.get_widget().get_vscrollbar().get_mapped() or d.get_widget().get_hscrollbar().get_mapped()) else None)
+                i.connect("drag-end", lambda d, *_: d.get_widget().get_root().get_surface().set_cursor(Gdk.Cursor.new_from_name("default")))
+        scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
+        scroll.zoom, scroll.re = 0.0, regex(fr"\n\.{scrolled.get_css_classes()[0]} .*}}\n")
+        scroll.connect("scroll", zoom_media)
+        scrolled.add_controller(scroll)
     else: parent.set_child(picture)
     if parent_type is Gtk.Overlay:
         parent.event = Gtk.EventControllerMotion()
@@ -231,14 +270,14 @@ def Media(uri: Gio.File | None | str, child=None, scrollable=None, parent_type=G
             parent.add_overlay(revealer)
         if play == True: picture.media.set_properties(playing=True, loop=True)
     elif mimetype.startswith("image") or mimetype.endswith("zip"): app.thread.submit(load_image, picture, uri, mimetype, finish_func, media)
-    if parent_type is Gtk.Overlay:
+    if parent_type is Gtk.Overlay and scrollable or mimetype.startswith("video"):
         shortcuts = Gtk.ShortcutController()
         parent.add_controller(shortcuts)
         add_grab_focus(parent)
         if mimetype.startswith("video"): shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("space"), Gtk.CallbackAction.new(media_play_pause)))
-        if not scrollable == None:
+        if scrollable:
             shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("f"), Gtk.CallbackAction.new(lambda w, *_: (w.get_child().get_child().set_vscroll_policy(not w.get_child().get_child().get_vscroll_policy()), True)[-1] )))
-        add_move_shortcuts(shortcuts, scrolled if not scrollable == None else parent)
+        add_move_shortcuts(shortcuts, scrolled if scrollable else parent)
     return parent
 toggle_revealer = lambda b, v: True if hasattr(b.get_property("target"), "controls") and b.get_property("target").controls.get_template_child(Gtk.MediaControls, "volume_button").get_active() else v
 def media_play_pause(parent: Gtk.Widget, *_) -> None:
@@ -282,7 +321,7 @@ def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype="", fi
         GLib.idle_add(picture.remove_css_class, "spinner")
         finish_func(picture, texture)
     else:
-        pixbuf = Gdk.Pixbuf.PixbufAnimation.new_from_stream(stream)
+        pixbuf = GdkPixbuf.PixbufAnimation.new_from_stream(stream)
         picture.height = pixbuf.get_height() / pixbuf.get_width()
         if pixbuf.is_static_image():
             if hasattr(picture, "set_pixbuf"): GLib.idle_add(picture.set_pixbuf, pixbuf.get_static_image())
@@ -290,6 +329,7 @@ def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype="", fi
         else:
             picture.image = pixbuf.get_iter()
             picture.connect("map", media_image_animate)
+            media_image_animate(picture)
         GLib.idle_add(picture.remove_css_class, "spinner")
         finish_func(picture, pixbuf)
 def media_finish(paintable: Gtk.MediaFile, data: tuple) -> None:
@@ -298,7 +338,7 @@ def media_finish(paintable: Gtk.MediaFile, data: tuple) -> None:
     GLib.idle_add(data[0].set_paintable if hasattr(data[0], "set_paintable") else data[0].set_custom_image, paintable)
     data[1](data[0], paintable)
     del data[0].media
-def media_image_animate(p: Gtk.Picture, *_) -> None:
+def media_image_animate(p: Gtk.Picture) -> None:
     if p.get_mapped():
         if isinstance(p.image, GdkPixbuf.PixbufAnimationIter):
             delay = p.image.get_delay_time()
@@ -310,11 +350,11 @@ def media_image_animate(p: Gtk.Picture, *_) -> None:
             delay = f.get_delay() / 1000
             GLib.idle_add(p.set_paintable if hasattr(p, "set_paintable") else p.set_custom_image, GlyGtk4.frame_get_texture(f))
         GLib.timeout_add(delay, media_image_animate, p)
+colors_replace = regex(":root {--color-1.*}")
 def set_colors(arg=None, optional=False) -> False:
     if hasattr(arg, "colors") and not (optional and not app.lookup_action("colors").get_state().unpack()):
-        style = Gtk.CssProvider()
-        GLib.idle_add(style.load_from_string, ":root {" + "".join(tuple(f"--color-{i + 1}: rgb{color};" for i, color in enumerate(arg.colors))) + "}")
-        GLib.idle_add(Gtk.StyleContext.add_provider_for_display, *(Gdk.Display.get_default(), style, Gtk.STYLE_PROVIDER_PRIORITY_USER))
+        css.style = colors_replace.sub("", css.style) + ":root {" + " ".join(tuple(fr"--color-{n + 1}: rgb{c};" for n, c in enumerate(arg.colors))) + "}"
+        GLib.idle_add(css.load_from_string, css.style)
         GLib.idle_add(app.window.add_css_class, "colored")
     else: GLib.idle_add(app.window.remove_css_class, "colored")
     return False
@@ -419,9 +459,11 @@ def DateRow(**kwargs) -> Adw.ActionRow:
 def data_default(existing: dict, data: dict) -> None:
     for key in data:
         existing.setdefault(key, data[key])
-        if isinstance(data[key], dict): data_default(existing[key], data[key])
-
+        if isinstance(data[key], dict) and data[key]: data_default(existing[key], data[key])
+    for key in tuple(existing):
+        if not key in data: del existing[key]
 def data_save() -> None:
+    if not hasattr(app, "data"): return
     for i in app.data["Window"]:
         app.data["Window"][i] = app.lookup_action(i).get_state().unpack()
     for i in app.persist:
@@ -453,7 +495,9 @@ def generate_thumbnail(file: Gio.File | str, destination: Gio.File | str, callba
     if callback: process.wait_async(None, callback, data)
     else: process.wait()
 
-def palette(value: Gdk.Paintable | GdkPixbuf.Pixbuf, colors=3, distance=1.0, black_white=1.0) -> list:
+def palette(value: Gdk.Paintable | GdkPixbuf.Pixbuf, colors=3, distance=100, black_white=170, size=64) -> list:
+    if hasattr(value, "get_custom_image"):
+        value = value.get_custom_image()
     if hasattr(value, "get_media_stream"):
         value = value.get_media_stream()
     if hasattr(value, "get_paintable"):
@@ -462,18 +506,18 @@ def palette(value: Gdk.Paintable | GdkPixbuf.Pixbuf, colors=3, distance=1.0, bla
         value = value.get_static_image()
     if not isinstance(value, Gdk.Texture) and hasattr(value, "snapshot"):
         snapshot = Gtk.Snapshot.new()
-        s, w, h = 64, value.get_intrinsic_width(), value.get_intrinsic_height()
-        if max(w, h) > s:
-            s = s / max(w, h)
+        w, h = value.get_intrinsic_width(), value.get_intrinsic_height()
+        if max(w, h) > size:
+            s = size / max(w, h)
             w, h = int(w * s), int(h * s)
         value.snapshot(snapshot, w, h)
         value = snapshot.to_node().get_texture()
     if isinstance(value, Gdk.Texture):
         value = Gdk.pixbuf_get_from_texture(value)
-    s, w, h = 64, value.get_width(), value.get_height()
-    if max(w, h) > s:
-        s = s / max(w, h)
-        value = value.scale_simple(int(w * s), int(h * s), 2)
+    w, h = value.get_width(), value.get_height()
+    if max(w, h) > size:
+        s = size / max(w, h)
+        value = value.scale_simple(int(w * s), int(h * s), GdkPixbuf.InterpType.BILINEAR)
     pixel_colors = {}
     pixels = value.get_property("pixel-bytes").get_data()
     for y in range(value.get_height()):
@@ -490,17 +534,18 @@ def palette(value: Gdk.Paintable | GdkPixbuf.Pixbuf, colors=3, distance=1.0, bla
     current_distance = 0
     while colors > len(dominant_colors):
         current_length = len(dominant_colors)
+        cb = max(0, int(black_white - current_distance))
         for color in pixel_colors:
-            if color in dominant_colors or sqrt(sum(c ** 2 for c in color)) < max(0, int(black_white * 100) - current_distance) or sqrt(sum((255 - i) ** 2 for i in color)) < max(0, int(black_white * 100) - current_distance): continue
+            if color in dominant_colors or sqrt(sum(c ** 2 for c in color)) < cb or sqrt(sum((255 - i) ** 2 for i in color)) < cb: continue
             too_similar = False
             for selected_color in dominant_colors:
-                if sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(color, selected_color))) < int(distance * 100) - current_distance:
+                if sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(color, selected_color))) < max(0, int(distance - current_distance)):
                     too_similar = True
                     break
             if not too_similar: dominant_colors.append(color)
             if len(dominant_colors) >= colors: break
         if current_length == len(dominant_colors):
-            current_distance += 5
+            current_distance += 10
     return dominant_colors
 
 random_sort = lambda c: GLib.random_int_range(1, 500)
@@ -511,3 +556,70 @@ def add_grab_focus(w: Gtk.Widget) -> None:
     click = Gtk.GestureClick()
     click.connect("pressed", lambda e, *_: e.get_widget().grab_focus())
     w.add_controller(click)
+
+def drag_scrolled(c: Gtk.GestureDrag, x: float, y: float) -> None:
+    if hasattr(c, "s") and c.s == (c.get_start_point(), x, y): return
+    c.s = (c.get_start_point(), x, y)
+    for n, i in enumerate((x, y)):
+        h = c.get_widget().get_hadjustment() if n == 0 else c.get_widget().get_vadjustment()
+        h.set_value(h.get_value() + h.get_step_increment() * (c.get_start_point()[n] / i))
+
+def CalendarHeatmap(values: str, years: dict, **kwargs) -> Gtk.Box:
+    max_v = max(v for year in years.values() for v in year.values())
+    calendar = Gtk.Box(css_name="calendar-chart", orientation=Gtk.Orientation.VERTICAL, **kwargs)
+    for y in sorted(years, key=lambda i: int(i), reverse=True):
+        year = Gtk.Box(css_name="year", halign=Gtk.Align.CENTER, orientation=Gtk.Orientation.VERTICAL)
+        days = []
+        for d, n in years[y].items():
+            v = float(n / (max_v or 1))
+            days.append(Adw.Bin(css_name="empty" if v == 0 else "day", opacity=1 if v == 0 else max(0.15, v), tooltip_text=f"{d}{' - ' + str(n) + ' ' + values if n > 0 else ''}"))
+        for _ in range(7): year.append(Gtk.Box())
+        w = None
+        for l in (tuple(Adw.Bin(css_name="pad") for _ in range(GLib.DateTime.new_local(int(y), 1, 1, 0, 0, 0).get_day_of_week())), days):
+            for i in l:
+                w = year.get_first_child() if not w else w.get_next_sibling()
+                if not w:
+                    w = year.get_first_child()
+                w.append(i)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        for i in (Gtk.Label(halign=Gtk.Align.CENTER, label=y, tooltip_text=f"{sum(years[y].values())} {values}", css_classes=("title-2", )), Gtk.ScrolledWindow(child=year, vscrollbar_policy=Gtk.PolicyType.NEVER)): box.append(i)
+        calendar.append(box)
+    return calendar
+
+def BarChart(title: str, values: str, v: dict, max_height=350, **kwargs) -> Gtk.Box:
+    box = Gtk.Box(css_name="bar-chart", orientation=Gtk.Orientation.VERTICAL, halign=Gtk.Align.CENTER, **kwargs)
+    for i in (Gtk.Label(halign=Gtk.Align.CENTER, label=title, css_classes=("title-2", )), Gtk.Box()): box.append(i)
+    max_v = max(v.values())
+    f = max_height / (max_v or 1)
+    for i in v: box.get_last_child().append(Adw.Bin(css_name="bar", valign=Gtk.Align.END, height_request=v[i] * f, tooltip_text=f"{i} - {v[i]} {values}"))
+    return box
+
+donut_replace = regex(r"donut-chart legend > widget.*")
+def DonutChart(title: str, values: str, data: dict, colors: tuple, size=350, hole=180, gap=6, **kwargs) -> Gtk.Box:
+    total = sum(data.values()) or 1
+    c = size // 2
+    r = c - 20
+    hr = hole // 2
+    angle = -90
+    svg = f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
+    legend, box, chart = Gtk.Box(valign=Gtk.Align.CENTER, css_name="legend", orientation=Gtk.Orientation.VERTICAL), Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_name="donut-chart", **kwargs), Gtk.Box(halign=Gtk.Align.CENTER)
+    style, n, gap = "\n", 0, gap/2
+    for i, v in enumerate(data):
+        if data[v] == 0: continue
+        legend.append(Adw.Bin(tooltip_text=f"{v} - {data[v]} - {(data[v] / total * 100):05.2f}%"))
+        color = f'rgba({str(colors[i%len(colors)]).strip("()")}, {0.4 if 1 >= i and len(data) == 4 and len(colors) == 2 else 1})'       
+        style += f"\ndonut-chart legend > widget:nth-child({n + 1}) {{ min-width: 20px; min-height: 20px; border-radius: 100px; background: {color}; }}\n"
+        if data[v] == total:
+            svg += f'<circle cx="{c}" cy="{c}" r="{(r + hr)/2}" stroke="{color}" stroke-width="{r - hr}" fill="none"/>'
+            break
+        sweep = data[v] / total * 360
+        draw = sweep - (gap * 2)
+        a1, a2, large = radians(angle + gap), radians(angle + gap + draw), 1 if draw > 180 else 0
+        svg += f'<path d="M {c + r*cos(a1)} {c + r*sin(a1)} A {r} {r} 0 {large} 1 {c + r*cos(a2)} {c + r*sin(a2)} L {c + hr*cos(a2)} {c + hr*sin(a2)} A {hr} {hr} 0 {large} 0 {c + hr*cos(a1)} {c + hr*sin(a1)} Z" fill="{color}"/>'
+        angle += sweep
+        n += 1
+    css.style = donut_replace.sub("", css.style).replace("\n\n", "\n") + "\n" + style.strip("\n\n")
+    GLib.idle_add(css.load_from_string, css.style)
+    for i in (Gtk.Picture(tooltip_text=f"{total} {values}", height_request=400, width_request=400, paintable=Gtk.Svg.new_from_bytes(GLib.Bytes.new_take(f"{svg}</svg>".encode("utf-8")))), legend): chart.append(i)
+    for i in (Gtk.Label(halign=Gtk.Align.CENTER, label=title, css_classes=("title-2", )), chart): box.append(i)
+    return box
