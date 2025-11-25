@@ -27,6 +27,7 @@ masonrybox view > column { border-spacing: 10px; }
 .entry-dialog .message-area  { border-spacing: 16px; }
 masonrybox media, masonrybox picture, media picture { border-radius: 13px; }
 media controls.toolbar.card { background: rgba(0, 0, 0, 0.3); color: white; margin: 6px; }
+scrolledwindow picture { transition: min-height 0.3s ease-in-out, min-width 0.3s ease-in-out; }
 controls.toolbar.card box > scale { padding: 0px; }
 .tagrow wrap-box { padding: 4px; }
 .tagrow box { padding: 12px;  border-spacing: 6px; }
@@ -203,8 +204,15 @@ def zoom_media(e: Gtk.EventControllerScroll, x: float, y: float) -> bool:
     if e.zoom == 0:
         w = h = 0
     else:
-        w = int(e.get_widget().get_child().get_child().get_paintable().get_intrinsic_width() * (e.zoom * 0.1))
-        h = int(e.get_widget().get_child().get_child().get_paintable().get_intrinsic_height() * (e.zoom * 0.1))
+        p = e.get_widget().get_child().get_child().get_paintable()
+        size, ow, oh = 150, p.get_intrinsic_width(), p.get_intrinsic_height()
+        if max(ow, oh) > size:
+            s = size / max(ow, oh)
+        w, h = (ow * s) * e.zoom, (oh * s) * e.zoom
+        if 0 > y:
+            while not max(w, h) > max(e.get_widget().get_width(), e.get_widget().get_height()):
+                e.zoom += 1
+                w, h = (ow * s) * e.zoom, (oh * s) * e.zoom
     css.style = css.style + f"\n.{e.get_widget().get_css_classes()[0]} picture {{min-width:{w}px; min-height:{h}px;}}\n"
     GLib.idle_add(css.load_from_string, css.style)
     return True
