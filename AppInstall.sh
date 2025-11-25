@@ -5,7 +5,7 @@ BINARY=$(xmllint metainfo.xml --noout --xpath "//binary/text()")
 COMMENT=$(xmllint metainfo.xml --noout --xpath "//summary/text()")
 CATEGORIES=$(xmllint metainfo.xml --noout --xpath "//category/text()" | paste -sd ";" -)
 KEYWORDS=$(xmllint metainfo.xml --noout --xpath "//keyword/text()" | paste -sd ";" -)
-PYTHON=$(ls /usr/lib/ | grep python)
+PYTHON=$(ls /app/lib/ | grep python)
 install -D .AppUtils/AppUtils.py /app/lib/$PYTHON/site-packages/AppUtils.py
 install -Dm755 main.py /app/bin/$BINARY
 install -D metainfo.xml /app/share/metainfo/$ID.metainfo.xml
