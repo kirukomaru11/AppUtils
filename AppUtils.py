@@ -27,7 +27,7 @@ masonrybox view > column { border-spacing: 10px; }
 .entry-dialog .message-area  { border-spacing: 16px; }
 masonrybox media, masonrybox picture, media picture { border-radius: 13px; }
 media controls.toolbar.card { background: rgba(0, 0, 0, 0.3); color: white; margin: 6px; }
-scrolledwindow picture { transition: min-height 0.3s ease-in-out, min-width 0.3s ease-in-out; }
+scrolledwindow > viewport > picture:only-child { transition: min-height 0.3s ease-in-out, min-width 0.3s ease-in-out; }
 controls.toolbar.card box > scale { padding: 0px; }
 .tagrow wrap-box { padding: 4px; }
 .tagrow box { padding: 12px;  border-spacing: 6px; }
