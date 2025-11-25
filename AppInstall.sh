@@ -6,7 +6,7 @@ COMMENT=$(xmllint metainfo.xml --noout --xpath "//summary/text()")
 CATEGORIES=$(xmllint metainfo.xml --noout --xpath "//category/text()" | paste -sd ";" -)
 KEYWORDS=$(xmllint metainfo.xml --noout --xpath "//keyword/text()" | paste -sd ";" -)
 PYTHON=$(ls /usr/lib/ | grep python)
-install -D AppUtils.py /app/lib/$PYTHON/site-packages/AppUtils.py
+install -D .AppUtils/AppUtils.py /app/lib/$PYTHON/site-packages/AppUtils.py
 install -Dm755 main.py /app/bin/$BINARY
 install -D metainfo.xml /app/share/metainfo/$ID.metainfo.xml
 echo -e "[Desktop Entry]\nType=Application\nName=$NAME\nComment=$COMMENT\nIcon=$ID\nExec=$BINARY\nCategories=$CATEGORIES\nKeywords=$KEYWORDS" > /app/share/applications/$ID.desktop
