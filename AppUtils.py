@@ -15,16 +15,8 @@ from zipfile import ZipFile
 import gi
 gi.require_version("Adw", "1")
 gi.require_version("Soup", "3.0")
-from gi.repository import Adw, Gtk, GLib, Gio, Gdk, GdkPixbuf, GObject, Pango, Soup
-
-try:
-    gi.require_version("GlyGtk4", "2")
-    from gi.repository import GlyGtk4
-    from gi.repository import Gly
-    GLY = True
-except:
-    GLY = False
-    print("Glycin not available")
+gi.require_version("GlyGtk4", "2")
+from gi.repository import Adw, Gtk, GlyGtk4, Gly, GLib, Gio, Gdk, GdkPixbuf, GObject, Pango, Soup
 
 css = Gtk.CssProvider.new()
 css.style = """
@@ -217,27 +209,36 @@ def zoom_media(e: Gtk.EventControllerScroll, x: float, y: float) -> bool:
     GLib.idle_add(css.load_from_string, css.style)
     return True
 
-default_finish = lambda p, pp: None
-def Media(uri: Gio.File | None | str, child=None, scrollable=False, parent_type=Gtk.Picture, mimetype="", play=True, finish_func=default_finish, media=False, **kwargs) -> Gtk.Widget:
+def Media(uri: Gio.File | None | str, scrollable=False, overlay=False, controls=True, avatar=False, mimetype="", play=True, loading_paintable=None) -> Gtk.Widget:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
         mimetype = Gio.content_type_guess(uri.get_uri())[0]
-    pargs = dict(((i[0].replace("p__", ""), i[1]) for i in kwargs.items() if i[0].startswith("p__")))
-    cargs = dict(((i[0].replace("c__", ""), i[1]) for i in kwargs.items() if i[0].startswith("c__")))
-    if not pargs and parent_type is Gtk.Overlay:
-        pargs = {"css_name": "media", "overflow": Gtk.Overflow.HIDDEN}
-    parent = parent_type(**pargs)
-    if mimetype.startswith("audio"):
-        controls = Gtk.MediaControls(hexpand=True, media_stream=Gtk.MediaFile.new_for_file(uri), css_classes=("toolbar", "card"))
-        for i in ("time_label", "duration_label"): GLib.idle_add(controls.get_template_child(Gtk.MediaControls, i).unparent)
-        return controls
-    picture = parent if (parent_type is Adw.Avatar or parent_type is Gtk.Picture) else child if child else Gtk.Picture(**cargs)
-    if parent_type is Gtk.Picture or parent_type is Adw.Avatar:
-        parent = picture
-    elif scrollable and parent_type is Gtk.Overlay:
+    if not overlay and mimetype.startswith("video") or scrollable:
+        overlay = True
+    picture = None
+    if overlay:
+        overlay = Gtk.Overlay(css_name="media", halign=Gtk.Align.FILL if scrollable else Gtk.Align.CENTER, overflow=Gtk.Overflow.HIDDEN)
+        overlay.event = Gtk.EventControllerMotion()
+        overlay.add_controller(overlay.event)
+        if not scrollable and controls:
+            overlay.shortcuts = Gtk.ShortcutController()
+            add_grab_focus(overlay)
+            add_move_shortcuts(overlay.shortcuts, False)
+    if avatar:
+        picture = Adw.Avatar(halign=Gtk.Align.CENTER, size=200, show_initials=True, tooltip_text=avatar, text=avatar)
+    if not mimetype.startswith("audio") and not picture:
+        picture = Gtk.Picture(halign=Gtk.Align.CENTER if scrollable else Gtk.Align.FILL)
+        picture.play, picture.controls = play, controls
+    if picture and not (avatar and not uri):
+        if overlay and not scrollable: overlay.set_child(picture)
+        (picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image)(loading_paintable[0] if loading_paintable else app.spinner)
+        picture.css = loading_paintable[1] if loading_paintable else "spinner"
+        picture.add_css_class(picture.css)
+    if scrollable:
         scrolled = Gtk.ScrolledWindow(css_classes=("media-" + str(picture).split(" ")[-1].strip(")>"),), child=Gtk.Viewport(child=picture), propagate_natural_height=True, propagate_natural_width=True)
-        parent.set_child(scrolled)
+        if overlay:
+            overlay.set_child(scrolled)
         for i in tuple(scrolled.observe_controllers()):
             if type(i) in (Gtk.GesturePan, Gtk.GestureSwipe, Gtk.GestureLongPress, Gtk.EventControllerScroll):
                 i.set_propagation_phase(Gtk.PropagationPhase.NONE)
@@ -250,42 +251,20 @@ def Media(uri: Gio.File | None | str, child=None, scrollable=False, parent_type=
         scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
         scroll.zoom, scroll.re = 0.0, regex(fr"\n\.{scrolled.get_css_classes()[0]} .*}}\n")
         scroll.connect("scroll", zoom_media)
-        scrolled.add_controller(scroll)
-    else: parent.set_child(picture)
-    if parent_type is Gtk.Overlay:
-        parent.event = Gtk.EventControllerMotion()
-        parent.add_controller(parent.event)
-    if uri and mimetype or isinstance(picture, Gtk.Picture) and not "paintable" in pargs:
-        GLib.idle_add(picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image, app.spinner)
-        GLib.idle_add(picture.add_css_class, "spinner")
-    if mimetype.startswith("video"):
-        picture.media = Gtk.MediaFile.new_for_file(uri)
-        picture.sig = picture.media.connect("invalidate-contents", media_finish, (picture, finish_func))
-        if parent_type is Gtk.Overlay:
-            parent.controls = Gtk.MediaControls(hexpand=True, valign=Gtk.Align.END, css_classes=("toolbar", "card"), vexpand=True, media_stream=picture.media)
-            for i in ("time_label", "duration_label"): GLib.idle_add(parent.controls.get_template_child(Gtk.MediaControls, i).unparent)
-            revealer = Gtk.Revealer(child=parent.controls, transition_type=Gtk.RevealerTransitionType.CROSSFADE, valign=Gtk.Align.END)
-            parent.event.bind_property("contains-pointer", revealer, "reveal-child", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE, toggle_revealer)
-            revealer.controls = parent.controls
-            parent.add_overlay(revealer)
-        if play == True: picture.media.set_properties(playing=True, loop=True)
-    elif mimetype.startswith("image") or mimetype.endswith("zip"): app.thread.submit(load_image, picture, uri, mimetype, finish_func, media)
-    if parent_type is Gtk.Overlay and scrollable or mimetype.startswith("video"):
-        shortcuts = Gtk.ShortcutController()
-        parent.add_controller(shortcuts)
-        add_grab_focus(parent)
-        if mimetype.startswith("video"): shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("space"), Gtk.CallbackAction.new(media_play_pause)))
-        if scrollable:
-            shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("f"), Gtk.CallbackAction.new(lambda w, *_: (w.get_child().get_child().set_vscroll_policy(not w.get_child().get_child().get_vscroll_policy()), True)[-1] )))
-        add_move_shortcuts(shortcuts, scrolled if scrollable else parent)
-    return parent
+        scrolled.shortcuts = Gtk.ShortcutController()
+        for i in (scrolled.shortcuts, scroll): scrolled.add_controller(i)
+        add_grab_focus(scrolled)
+        add_move_shortcuts(scrolled.shortcuts, scrolled)
+        scrolled.shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("f"), Gtk.CallbackAction.new(lambda w, *_: (w.get_child().set_vscroll_policy(not w.get_child().get_vscroll_policy()), w.get_child().set_hscroll_policy(not w.get_child().get_hscroll_policy()), True)[-1] )))
+    widget = media_controls(mimetype) if mimetype.startswith("audio") else overlay if overlay else scrolled if scrollable else picture
+    if uri: app.thread.submit(load_media, widget, uri, mimetype)
+    return widget
 toggle_revealer = lambda b, v: True if hasattr(b.get_property("target"), "controls") and b.get_property("target").controls.get_template_child(Gtk.MediaControls, "volume_button").get_active() else v
 def media_play_pause(parent: Gtk.Widget, *_) -> None:
-    child = parent.get_child()
-    if isinstance(parent.get_child(), Gtk.ScrolledWindow):
-        child = child.get_child().get_child()
-    child.get_paintable().set_playing(False if child.get_paintable().get_playing() else True)
-def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype="", finish_func=default_finish, media=False) -> None:
+    while not hasattr(parent, "get_paintable") and hasattr(parent, "get_child"):
+        parent = parent.get_child()
+    if hasattr(parent, "get_paintable") and hasattr(parent.get_paintable(), "set_playing"): parent.get_paintable().set_playing(False if parent.get_paintable().get_playing() else True)
+def load_media(widget: Gtk.Widget, uri: Gio.File | None | str, mimetype="") -> None:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
     if uri and not mimetype:
@@ -295,61 +274,53 @@ def load_image(picture: Gtk.Picture, uri: Gio.File | None | str, mimetype="", fi
             if mimetype.endswith("zip"):
                 z = ZipFile(uri.peek_path(), "r")
                 i = sorted((i for i in z.namelist() if Gio.content_type_guess(i)[0].startswith("image")), key=alphabetical_sort)
-                stream = Gio.MemoryInputStream.new_from_data(z.read(i[0]))
+                _bytes = GLib.Bytes.new(z.read(i[0]))
             else:
-                stream = uri.read()
+                _bytes = uri.load_bytes()[0]
         else:
-            stream = app.session.send(Soup.Message.new("GET", uri.get_uri()))
+            _bytes = app.session.send_and_read(Soup.Message.new("GET", uri.get_uri()))
     except Exception as e:
         Toast(e)
-        return GLib.idle_add(picture.set_tooltip_text, str(e))
-    if GLY:
-        image = Gly.Loader.new_for_stream(stream).load()
+        return GLib.idle_add(widget.set_tooltip_text, str(e))
+    anim = mimetype.startswith(("audio", "video"))
+    w = widget
+    while not (hasattr(w, "set_media_stream") or hasattr(w, "set_paintable") or hasattr(w, "set_custom_image")) and hasattr(w, "get_child"):
+        w = w.get_child()
+    if mimetype.startswith("image") or mimetype.endswith("zip"):
+        image = Gly.Loader.new_for_bytes(_bytes).load()
         frame = image.next_frame()
-        texture = GlyGtk4.frame_get_texture(frame)
-        picture.height = image.get_height() / image.get_width()
-        if frame.get_delay() > 0:
-            if media:
-                picture.media = Gtk.MediaFile.new_for_file(uri)
-                picture.sig = picture.media.connect("invalidate-contents", media_finish, (picture, finish_func))
-                picture.media.set_properties(playing=True, loop=True)
-                return
-            else:
-                picture.image = image
-                picture.connect("map", media_image_animate)
-        GLib.idle_add(picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image, texture)
-        GLib.idle_add(picture.remove_css_class, "spinner")
-        finish_func(picture, texture)
-    else:
-        pixbuf = GdkPixbuf.PixbufAnimation.new_from_stream(stream)
-        picture.height = pixbuf.get_height() / pixbuf.get_width()
-        if pixbuf.is_static_image():
-            if hasattr(picture, "set_pixbuf"): GLib.idle_add(picture.set_pixbuf, pixbuf.get_static_image())
-            else: GLib.idle_add(picture.set_custom_image, Gdk.Texture.new_for_pixbuf(pixbuf.get_static_image()))
-        else:
-            picture.image = pixbuf.get_iter()
-            picture.connect("map", media_image_animate)
-            media_image_animate(picture)
-        GLib.idle_add(picture.remove_css_class, "spinner")
-        finish_func(picture, pixbuf)
-def media_finish(paintable: Gtk.MediaFile, data: tuple) -> None:
-    paintable.disconnect(data[0].sig)
-    GLib.idle_add(data[0].remove_css_class, "spinner")
-    GLib.idle_add(data[0].set_paintable if hasattr(data[0], "set_paintable") else data[0].set_custom_image, paintable)
-    data[1](data[0], paintable)
-    del data[0].media
-def media_image_animate(p: Gtk.Picture) -> None:
-    if p.get_mapped():
-        if isinstance(p.image, GdkPixbuf.PixbufAnimationIter):
-            delay = p.image.get_delay_time()
-            if p.image.advance():
-                if hasattr(p, "set_pixbuf"): GLib.idle_add(p.set_pixbuf, p.image.get_pixbuf())
-                else: GLib.idle_add(p.set_custom_image, Gdk.Texture.new_for_pixbuf(p.image.get_pixbuf()))
-        else:
-            f = p.image.next_frame()
-            delay = f.get_delay() / 1000
-            GLib.idle_add(p.set_paintable if hasattr(p, "set_paintable") else p.set_custom_image, GlyGtk4.frame_get_texture(f))
-        GLib.timeout_add(delay, media_image_animate, p)
+        widget.height = image.get_height() / image.get_width()
+        anim = frame.get_delay() > 0
+    if anim:
+        stream = Gtk.MediaFile.new_for_input_stream(Gio.MemoryInputStream.new_from_bytes(_bytes))
+        if isinstance(widget, Gtk.MediaControls): widget.set_media_stream(stream)
+        else: media_media(w, stream)
+    else: media_finish(w, GlyGtk4.frame_get_texture(frame))
+def media_controls(mimetype: str, overlay=False) -> Gtk.MediaControls:
+    controls = Gtk.MediaControls(hexpand=True, css_classes=("toolbar", "card"), vexpand=mimetype.startswith("video"))
+    for i in ("time_label", "duration_label"): GLib.idle_add(controls.get_template_child(Gtk.MediaControls, i).unparent)
+    if mimetype.startswith("audio") or not overlay: return controls
+    revealer = Gtk.Revealer(child=controls, transition_type=Gtk.RevealerTransitionType.CROSSFADE, valign=Gtk.Align.END)
+    overlay.event.bind_property("contains-pointer", revealer, "reveal-child", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE, toggle_revealer)
+    overlay.add_overlay(revealer)
+    (overlay.get_child() if hasattr(overlay.get_child(), "shortcuts") else overlay).shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("space"), Gtk.CallbackAction.new(media_play_pause)))
+    overlay.controls = controls
+    return controls
+def media_media(picture: Gtk.Widget, media: Gtk.MediaFile) -> None:
+    if picture.get_ancestor(Gtk.Overlay) and picture.controls:
+        controls = media_controls("video", picture.get_ancestor(Gtk.Overlay))
+        controls.set_media_stream(media)
+        media.bind_property("has-audio", controls.get_template_child(Gtk.MediaControls, "volume_button"), "visible", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE)
+    picture.media = media
+    picture.sig = picture.media.connect("invalidate-contents", lambda p, *_: media_finish(picture, p))
+    if picture.play: picture.media.set_properties(playing=True, loop=True)
+def media_finish(picture: Gtk.Widget, paintable: Gdk.Paintable) -> None:
+    if hasattr(picture, "sig"): paintable.disconnect(picture.sig)
+    GLib.idle_add(picture.set_paintable if hasattr(picture, "set_paintable") else picture.set_custom_image, paintable)
+    if hasattr(picture, "css"): GLib.idle_add(picture.remove_css_class, picture.css)
+    if hasattr(app, "finish_func"): app.finish_func(picture, paintable)
+    picture.media = None
+    del picture.media
 colors_replace = regex(":root {--color-1.*}")
 def set_colors(arg=None, optional=False) -> False:
     if hasattr(arg, "colors") and not (optional and not app.lookup_action("colors").get_state().unpack()):
@@ -398,10 +369,6 @@ def MasonryBox(adapt=((999, 2, Adw.BreakpointConditionLengthType.MAX_WIDTH), (10
         b = Adw.Breakpoint.new(Adw.BreakpointCondition.new_length(t, v, Adw.LengthUnit.PX))
         b.add_setter(masonrybox, "width-request", c)
         masonrybox.add_breakpoint(b)
-    masonrybox.add = lambda c: masonrybox_add(masonrybox, c)
-    masonrybox.remove = lambda c: tuple(i.unparent() if i == c else None for i in masonrybox.get_children())
-    masonrybox.remove_all = lambda clear=True: masonrybox_remove_all(masonrybox, clear)
-    masonrybox.get_children = lambda: sorted((i for c in masonrybox.get_child().get_child().get_child() for i in c if c.get_visible()), key=lambda i: i.__pos)
     if activate:
         masonrybox.activate = activate
         for n in range(3): masonrybox.add_controller((g := Gtk.GestureClick(button=n + 1), g.connect("released", masonrybox_activate), g)[-1])
@@ -410,29 +377,33 @@ def MasonryBox(adapt=((999, 2, Adw.BreakpointConditionLengthType.MAX_WIDTH), (10
     add_move_shortcuts(c, True)
     add_grab_focus(masonrybox)
     return masonrybox
+def masonrybox_get_children(m: Adw.BreakpointBin):
+    return sorted((i for c in m.get_child().get_child().get_child() for i in c if c.get_visible()), key=lambda i: i.__pos)
 def masonrybox_update(m: Adw.BreakpointBin, param: GObject.ParamSpec) -> None:
-    for c in sorted(m.remove_all(clear=False), key=lambda i: i.__pos): m.add(c)
+    for c in sorted(masonrybox_remove_all(m, clear=False), key=lambda i: i.__pos): masonrybox_add(m, c)
 def masonrybox_activate(g: Gtk.GestureClick, n_press:int, x: float, y: float) -> None:
     g.get_widget().grab_focus()
     child = g.get_widget().pick(x, y, Gtk.PickFlags.DEFAULT)
     if not child: return
     if child.get_parent() in (g.get_widget().get_child(), g.get_widget().get_child().get_child(), g.get_widget().get_child().get_child().get_child()): return
-    while child not in g.get_widget().get_children():
+    while child not in masonrybox_get_children(g.get_widget()):
         child = child.get_parent()
     g.get_widget().activate(g.get_widget(), child, g.get_button())
-def masonrybox_add(masonrybox: Adw.BreakpointBin, child: Gtk.Widget) -> None:
+def masonrybox_add(m: Adw.BreakpointBin, child: Gtk.Widget) -> None:
     child.unparent()
-    child.__pos = max((i.__pos for i in masonrybox.get_children()), default=0) + 1
-    for i in masonrybox.get_child().get_child().get_child():
+    child.__pos = max((i.__pos for i in masonrybox_get_children(m)), default=0) + 1
+    for i in m.get_child().get_child().get_child():
         i.height = sum((it.height if hasattr(it, "height") else max(10, it.get_height()) / max(10, it.get_width()) for it in i))
-    box = masonrybox.get_child().get_child().get_child()
+    box = m.get_child().get_child().get_child()
     min(tuple(i for i in box if i.get_visible()), key=lambda i: i.height, default=box.get_first_child()).append(child)
-def masonrybox_remove_all(masonrybox: Adw.BreakpointBin, clear: bool) -> None | tuple:
-    children = masonrybox.get_children()
+def masonrybox_remove(m: Adw.BreakpointBin, c: Gtk.Widget):
+    tuple(i.unparent() if i == c else None for i in masonrybox_get_children(masonrybox))
+def masonrybox_remove_all(m: Adw.BreakpointBin, clear=True) -> None | tuple:
+    children = masonrybox_get_children(m)
     for child in children: child.unparent()
-    box = masonrybox.get_child().get_child().get_child()
-    for i, c in enumerate(box): c.set_visible(masonrybox.get_property("width-request") > i)
-    for i in masonrybox.get_child().get_child().get_child():
+    box = m.get_child().get_child().get_child()
+    for i, c in enumerate(box): c.set_visible(m.get_property("width-request") > i)
+    for i in m.get_child().get_child().get_child():
         i.height = sum((it.height if hasattr(it, "height") else max(10, it.get_height()) / max(10, it.get_width()) for it in i))
     return None if clear else children    
 
