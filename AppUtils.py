@@ -27,7 +27,6 @@ masonrybox view > column { border-spacing: 10px; }
 .entry-dialog .message-area  { border-spacing: 16px; }
 masonrybox media, masonrybox picture, media picture { border-radius: 13px; }
 media controls.toolbar.card { background: rgba(0, 0, 0, 0.3); color: white; margin: 6px; }
-scrolledwindow > viewport > picture:only-child { transition: min-height 0.3s ease-in-out, min-width 0.3s ease-in-out; }
 controls.toolbar.card box > scale { padding: 0px; }
 .tagrow wrap-box { padding: 4px; }
 .tagrow box { padding: 12px;  border-spacing: 6px; }
@@ -196,27 +195,46 @@ def Toast(title: str, message=None, **kwargs) -> None:
     else: print(title)
     toast_overlay = app.window.get_visible_dialog() if isinstance(app.window.get_visible_dialog(), Adw.PreferencesDialog) else app.window.get_content()
     GLib.idle_add(toast_overlay.add_toast, Adw.Toast(title=title, use_markup=False, **kwargs))
-    return
+    return False
 
-def zoom_media(e: Gtk.EventControllerScroll, x: float, y: float) -> bool:
-    e.zoom = max(-(y) + e.zoom, 0)
-    css.style = e.re.sub("", css.style)
-    if e.zoom == 0:
-        w = h = 0
+def zoom_media(e: GObject.Object, x: float, y: float, center=False) -> bool:
+    scrolled = e if isinstance(e, Gtk.ScrolledWindow) else e.get_widget()
+    picture = scrolled.get_child().get_child()
+    p = picture.get_paintable()
+    scrolled.zoom = min(max(-(y) + scrolled.zoom, 0), 30)
+    if scrolled.zoom == 30: return
+    if scrolled.zoom == 0:
+        s = w = h = 0
     else:
-        p = e.get_widget().get_child().get_child().get_paintable()
-        size, ow, oh = 150, p.get_intrinsic_width(), p.get_intrinsic_height()
+        size, ow, oh = 300, p.get_intrinsic_width(), p.get_intrinsic_height()
         if max(ow, oh) > size:
             s = size / max(ow, oh)
-        w, h = (ow * s) * e.zoom, (oh * s) * e.zoom
+        w, h = (ow * s) * scrolled.zoom, (oh * s) * scrolled.zoom
         if 0 > y:
-            while not max(w, h) > max(e.get_widget().get_width(), e.get_widget().get_height()):
-                e.zoom += 1
-                w, h = (ow * s) * e.zoom, (oh * s) * e.zoom
-    css.style = css.style + f"\n.{e.get_widget().get_css_classes()[0]} picture {{min-width:{w}px; min-height:{h}px;}}\n"
-    GLib.idle_add(css.load_from_string, css.style)
+            while not max(w, h) > max(scrolled.get_width(), scrolled.get_height()):
+                scrolled.zoom += 1
+                w, h = (ow * s) * scrolled.zoom, (oh * s) * scrolled.zoom
+    for o, i, c in (("v", h, "y"), ("h", w, "x")):
+        adjustment = getattr(scrolled, f"get_{o}adjustment")()
+        if not hasattr(scrolled, c) or center: setattr(scrolled, c, adjustment.get_page_size() / 2)
+        anim = adjustment.anim
+        anim.pause()
+        anim.set_target(Adw.CallbackAnimationTarget.new(move_thing, (adjustment, o, picture, getattr(scrolled, c))))
+        anim.set_value_from(anim.get_value())
+        anim.set_value_to(i)
+        anim.play()
     return True
 
+def move_thing(value: int, data: tuple) -> None:
+    if len(data) >= 2:
+        a, o, p, c = data
+        value = max(-1, value)
+        p.set_property(f"{'width' if o == 'h' else 'height'}-request", value)
+        if (a.get_page_size() >= value): return
+        max_value = value - a.get_page_size()
+        value = c * (max_value / a.get_page_size())
+    data[0].set_value(value)
+    
 def Media(uri: Gio.File | None | str, scrollable=False, overlay=False, controls=True, avatar=False, mimetype="", play=True, loading_paintable=None) -> Gtk.Widget:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
@@ -244,26 +262,28 @@ def Media(uri: Gio.File | None | str, scrollable=False, overlay=False, controls=
         picture.css = loading_paintable[1] if loading_paintable else "spinner"
         picture.add_css_class(picture.css)
     if scrollable:
-        scrolled = Gtk.ScrolledWindow(css_classes=("media-" + str(picture).split(" ")[-1].strip(")>"),), child=Gtk.Viewport(child=picture), propagate_natural_height=True, propagate_natural_width=True)
-        if overlay:
-            overlay.set_child(scrolled)
+        scrolled = Gtk.ScrolledWindow(child=Gtk.Viewport(child=picture, scroll_to_focus=False), propagate_natural_height=True, propagate_natural_width=True)
+        for i in ("v", "h"):
+            anim = Adw.TimedAnimation(widget=picture, duration=200, target=Adw.CallbackAnimationTarget.new(lambda *_: None))
+            setattr(getattr(scrolled, f"get_{i}adjustment")(), "anim", anim)
+        if overlay: overlay.set_child(scrolled)
         for i in tuple(scrolled.observe_controllers()):
             if type(i) in (Gtk.GesturePan, Gtk.GestureSwipe, Gtk.GestureLongPress, Gtk.EventControllerScroll):
                 i.set_propagation_phase(Gtk.PropagationPhase.NONE)
                 if hasattr(i, "set_button"): i.set_button(1000)
+            if isinstance(i, Gtk.EventControllerMotion): i.connect("motion", lambda e, x, y: (setattr(e.get_widget(), "x", x), setattr(e.get_widget(), "y", y)))
             if isinstance(i, Gtk.GestureDrag):
                 i.set_touch_only(False)
                 i.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
                 i.connect("drag-begin", lambda d, *_: d.get_widget().get_root().get_surface().set_cursor(Gdk.Cursor.new_from_name("grabbing")) if (d.get_widget().get_vscrollbar().get_mapped() or d.get_widget().get_hscrollbar().get_mapped()) else None)
                 i.connect("drag-end", lambda d, *_: d.get_widget().get_root().get_surface().set_cursor(Gdk.Cursor.new_from_name("default")))
         scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL)
-        scroll.zoom, scroll.re = 0.0, regex(fr"\n\.{scrolled.get_css_classes()[0]} .*}}\n")
+        scrolled.zoom = 0
         scroll.connect("scroll", zoom_media)
         scrolled.shortcuts = Gtk.ShortcutController()
         for i in (scrolled.shortcuts, scroll): scrolled.add_controller(i)
         add_grab_focus(scrolled)
-        add_move_shortcuts(scrolled.shortcuts, scrolled)
-        scrolled.shortcuts.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("f"), Gtk.CallbackAction.new(lambda w, *_: (w.get_child().set_vscroll_policy(not w.get_child().get_vscroll_policy()), w.get_child().set_hscroll_policy(not w.get_child().get_hscroll_policy()), True)[-1] )))
+        add_move_shortcuts(scrolled.shortcuts, True)
     widget = media_controls(mimetype) if mimetype.startswith("audio") else overlay if overlay else scrolled if scrollable else picture
     if uri: app.thread.submit(load_media, widget, uri, mimetype)
     return widget
@@ -343,29 +363,38 @@ def add_move_shortcuts(controller: Gtk.ShortcutController, scrolled: bool) -> No
     for i in ("Down", "s", "j"): GLib.idle_add(controller.add_shortcut, Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(i), Gtk.CallbackAction.new(scroll_move_shortcuts, Gtk.DirectionType.DOWN, scrolled)))
     for i in ("Left", "a", "h"): GLib.idle_add(controller.add_shortcut, Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(i), Gtk.CallbackAction.new(scroll_move_shortcuts, Gtk.DirectionType.LEFT, scrolled)))
     for i in ("Right", "d", "l"): GLib.idle_add(controller.add_shortcut, Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(i), Gtk.CallbackAction.new(scroll_move_shortcuts, Gtk.DirectionType.RIGHT, scrolled)))
+    if scrolled:
+        controller.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("f"), Gtk.CallbackAction.new(lambda w, *_: (w.get_child().set_vscroll_policy(not w.get_child().get_vscroll_policy()), w.get_child().set_hscroll_policy(not w.get_child().get_hscroll_policy()), True)[-1] )))
+        for i in ("minus", "q"): controller.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(i), Gtk.CallbackAction.new(lambda w, *_: zoom_media(w, 0, 1, True) )))
+        for i in ("equal", "e"): controller.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string(i), Gtk.CallbackAction.new(lambda w, *_: zoom_media(w, 0, -1, True))))
 def scroll_move_shortcuts(widget: Gtk.Widget, args: None, direction: Gtk.DirectionType, scrolled: bool) -> bool:
-    policy, invert = None, False
+    v = False
     if scrolled:
         viewport = widget
         while not isinstance(viewport, Gtk.Viewport):
             viewport = viewport.get_child()
-        policy = viewport.get_hscroll_policy() if direction in (Gtk.DirectionType.LEFT, Gtk.DirectionType.RIGHT) else viewport.get_vscroll_policy()
-        if policy is Gtk.ScrollablePolicy.NATURAL:
-            adjustment = viewport.get_hadjustment() if direction in (Gtk.DirectionType.LEFT, Gtk.DirectionType.RIGHT) else viewport.get_vadjustment()
-        else:
+        adjustment = viewport.get_hadjustment() if direction in (Gtk.DirectionType.LEFT, Gtk.DirectionType.RIGHT) else viewport.get_vadjustment()
+        if 0 >= (adjustment.get_upper() - adjustment.get_page_size()):
             adjustment = None
     controls = widget.controls if hasattr(widget, "controls") else widget.get_parent().controls if hasattr(widget.get_parent(), "controls") else None
-    if not policy is Gtk.ScrollablePolicy.NATURAL:
+    if not adjustment:
         if controls:
             t = "volume_button" if direction in (Gtk.DirectionType.UP, Gtk.DirectionType.DOWN) else "seek_scale"
             adjustment = controls.get_template_child(Gtk.MediaControls, t).get_adjustment()
-            invert = t == "volume_button"
+            if t == "volume_button":
+                v = -(adjustment.get_step_increment()) if direction in (Gtk.DirectionType.RIGHT, Gtk.DirectionType.DOWN) else adjustment.get_step_increment()
     if not adjustment: return False
-    if invert:
-        v = -(adjustment.get_step_increment()) if direction in (Gtk.DirectionType.RIGHT, Gtk.DirectionType.DOWN) else adjustment.get_step_increment()
-    else:
+    if not v:
         v = adjustment.get_step_increment() if direction in (Gtk.DirectionType.RIGHT, Gtk.DirectionType.DOWN) else -(adjustment.get_step_increment())
-    adjustment.set_value(v + adjustment.get_value())
+    if not hasattr(adjustment, "anim"): adjustment.set_value(v + adjustment.get_value())
+    else:
+        anim = adjustment.anim
+        anim.skip()
+        anim.set_duration(200)
+        anim.set_target(Adw.CallbackAnimationTarget.new(move_thing, (adjustment,)))
+        anim.set_value_from(adjustment.get_value())
+        anim.set_value_to(v + adjustment.get_value())
+        anim.play()
     return True
 
 def MasonryBox(adapt=((999, 2, Adw.BreakpointConditionLengthType.MAX_WIDTH), (1000, 3, Adw.BreakpointConditionLengthType.MIN_WIDTH), (1200, 4, Adw.BreakpointConditionLengthType.MIN_WIDTH)), activate=None) -> Adw.BreakpointBin:
@@ -382,7 +411,6 @@ def MasonryBox(adapt=((999, 2, Adw.BreakpointConditionLengthType.MAX_WIDTH), (10
         for n in range(3): masonrybox.add_controller((g := Gtk.GestureClick(button=n + 1), g.connect("released", masonrybox_activate), g)[-1])
     c = Gtk.ShortcutController()
     masonrybox.add_controller(c)
-    add_move_shortcuts(c, True)
     add_grab_focus(masonrybox)
     return masonrybox
 def masonrybox_get_children(m: Adw.BreakpointBin):
