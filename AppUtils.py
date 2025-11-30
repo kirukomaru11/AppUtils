@@ -95,7 +95,7 @@ class TagRow(Adw.PreferencesRow):
             w = Gtk.Box(css_classes=("pill",), halign=Gtk.Align.START, css_name="tag")
             r = Gtk.Button(icon_name="window-close-symbolic", css_classes=("flat", "circular"), tooltip_text="Remove Tag")
             r.connect("clicked", lambda b: (t := b.get_ancestor(TagRow), t.set_property("tags", tuple(i for i in t.tags if not i == b.get_prev_sibling().get_label())), t.grab_focus())[1])
-            for it in (Gtk.Label(use_markup=True, tooltip_text=i if len(i) > 20 else "", label=i, ellipsize=Pango.EllipsizeMode.END), r): w.append(it)
+            for it in (Gtk.Label(use_markup=False, tooltip_text=i if len(i) > 20 else "", label=i, ellipsize=Pango.EllipsizeMode.END), r): w.append(it)
             self.wrapbox.append(w)
             self.emit("tag-widget-added", w)
 def tagrow_clicked(e: Gtk.GestureClick, n: int, x: float, y: float) -> None:
@@ -228,9 +228,8 @@ def zoom_media(e: GObject.Object, x: float, y: float, center=False) -> bool:
 def move_thing(value: int, data: tuple) -> None:
     if len(data) >= 2:
         a, o, p, c = data
-        value = max(-1, value)
+        value = max(0, value)
         p.set_property(f"{'width' if o == 'h' else 'height'}-request", value)
-        if (a.get_page_size() >= value): return
         max_value = value - a.get_page_size()
         value = c * (max_value / a.get_page_size())
     data[0].set_value(value)
@@ -455,6 +454,18 @@ def EntryDialog(callback=None, multiline=False, appearance=Adw.ResponseAppearanc
     dialog.set_response_appearance("confirm", appearance)
     dialog.connect("map", lambda d: (d.get_extra_child().set_text("") if isinstance(d.get_extra_child(), Gtk.Entry) else d.get_extra_child().get_buffer().set_text(""), d.get_extra_child().grab_focus())[0] if d.get_mapped() else None)
     return dialog
+def unique_name(n: str | Gio.File, d: dict | Gio.File) -> str | Gio.File:
+    new, nn = n, 1
+    if isinstance(d, Gio.File):
+        new = d.get_child(n)
+        while os.path.exists(new.peek_path()):
+            nn += 1
+            new = d.get_child(f"{n} {nn}")
+    else:
+        while new in d:
+            nn += 1
+            new = f"{n} {nn}"
+    return new
 
 def DateRow(**kwargs) -> Adw.ActionRow:
     row = Adw.ActionRow(**kwargs, css_classes=("property", "date-row"), subtitle_selectable=True)
@@ -469,20 +480,22 @@ def data_default(existing: dict, data: dict) -> None:
         if isinstance(data[key], dict) and data[key]: data_default(existing[key], data[key])
     for key in tuple(existing):
         if not key in data: del existing[key]
-def data_save() -> None:
+def data_save(crash=False) -> None:
     if not hasattr(app, "data"): return
-    for i in app.data["Window"]:
-        app.data["Window"][i] = app.lookup_action(i).get_state().unpack()
-    for i in app.persist:
-        if isinstance(i, Gio.Action):
-            app.data[i.path][i.get_name()] = i.get_state().unpack()
-        else:
-            n = i.get_title() if hasattr(i, "get_title") else i.get_name()
-            v = i.get_property(i.property)
-            if hasattr(i, "page"):
-                app.data[i.page][i.group][n] = v.unpack() if hasattr(v, "unpack") else v.get_string() if hasattr(v, "get_string") else v
+    if crash: print("Saving part of data...")
+    else:
+        for i in app.data["Window"]:
+            app.data["Window"][i] = app.lookup_action(i).get_state().unpack()
+        for i in app.persist:
+            if isinstance(i, Gio.Action):
+                app.data[i.path][i.get_name()] = i.get_state().unpack()
             else:
-                app.data[i.path][n] = v.unpack() if hasattr(v, "unpack") else v.get_string() if hasattr(v, "get_string") else v
+                n = i.get_title() if hasattr(i, "get_title") else i.get_name()
+                v = i.get_property(i.property)
+                if hasattr(i, "page"):
+                    app.data[i.page][i.group][n] = v.unpack() if hasattr(v, "unpack") else v.get_string() if hasattr(v, "get_string") else v
+                else:
+                    app.data[i.path][n] = v.unpack() if hasattr(v, "unpack") else v.get_string() if hasattr(v, "get_string") else v
     app.data_file.replace_contents(marshal_string(app.data), None, True, 0)
 
 def launch(arg: Gio.File | str, folder=False) -> None:
