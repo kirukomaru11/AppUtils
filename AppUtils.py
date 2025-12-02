@@ -191,6 +191,7 @@ def Menu(*args, freeze=True) -> Gio.Menu:
     return menu
 
 def Toast(title: str, message=None, **kwargs) -> None:
+    title = str(title)
     if message: print(message)
     else: print(title)
     toast_overlay = app.window.get_visible_dialog() if isinstance(app.window.get_visible_dialog(), Adw.PreferencesDialog) else app.window.get_content()
@@ -348,10 +349,10 @@ def media_finish(picture: Gtk.Widget, paintable: Gdk.Paintable) -> None:
     if hasattr(app, "finish_func"): app.finish_func(picture, paintable)
     picture.media = None
     del picture.media
-colors_replace = regex(":root {--color-1.*}")
+colors_replace = regex(r"\n:root {--color-1.*}\n")
 def set_colors(arg=None, optional=False) -> False:
     if hasattr(arg, "colors") and not (optional and not app.lookup_action("colors").get_state().unpack()):
-        css.style = colors_replace.sub("", css.style) + ":root {" + " ".join(tuple(fr"--color-{n + 1}: rgb{c};" for n, c in enumerate(arg.colors))) + "}"
+        css.style = colors_replace.sub("", css.style) + "\n:root {" + " ".join(tuple(fr"--color-{n + 1}: rgb{c};" for n, c in enumerate(arg.colors))) + "}\n"
         GLib.idle_add(css.load_from_string, css.style)
         GLib.idle_add(app.window.add_css_class, "colored")
     else: GLib.idle_add(app.window.remove_css_class, "colored")
