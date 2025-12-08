@@ -102,7 +102,7 @@ def tagrow_clicked(e: Gtk.GestureClick, n: int, x: float, y: float) -> None:
     w = e.get_widget().pick(x, y, Gtk.PickFlags.DEFAULT)
     if not w.get_ancestor(Adw.WrapBox) or isinstance(w, Adw.WrapBox): e.get_widget().prompt.present(e.get_widget().get_root())
 
-def App(args=None, style=None, shortcuts={}, metainfo="", activate=lambda a: (a.window.set_application(a) if not a.get_active_window() else None, a.window.present()), shutdown=lambda a: (data_save(), app.thread.shutdown(wait=True, cancel_futures=True)), file_open=None, data={}, **kwargs) -> Adw.Application:
+def App(args=None, style="", shortcuts={}, metainfo="", activate=lambda a: (a.window.set_application(a) if not a.get_active_window() else None, a.window.present()), shutdown=lambda a: (data_save(), app.thread.shutdown(wait=True, cancel_futures=True)), file_open=None, data={}, **kwargs) -> Adw.Application:
     global app
     app = Adw.Application(**kwargs)
     app.register()
@@ -110,11 +110,20 @@ def App(args=None, style=None, shortcuts={}, metainfo="", activate=lambda a: (a.
         app.run(args) if args else app.run()
         exit()
     Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.path.join(GLib.get_system_data_dirs()[0], app.get_application_id()))
+    app.about = About(metainfo if metainfo else GLib.build_filenamev((GLib.get_system_data_dirs()[0], "metainfo", f"{app.get_application_id()}.metainfo.xml")))
+    app.data_folder = Gio.File.new_for_path(os.path.join(GLib.get_user_data_dir(), app.about.get_application_name().lower()))
+    data_style = app.data_folder.get_child("style.css")
+    if os.path.exists(data_style.get_path()):
+        css.style += "\n" + data_style.load_contents()[1].decode("utf-8") + "\n"
     if style:
         css.style += "\n" + style
-        css.load_from_string(css.style)
-    app.about = About(metainfo if metainfo else GLib.build_filenamev((GLib.get_system_data_dirs()[0], "metainfo", f"{app.get_application_id()}.metainfo.xml")))
+    css.load_from_string(css.style)
     app.session = Soup.Session(user_agent=app.about.get_application_name(), max_conns_per_host=10)
+    data_cookies = app.data_folder.get_child("cookies")
+    if os.path.exists(data_cookies.get_path()):
+        c = Soup.CookieJar()
+        for i in data_cookies.load_contents()[1].decode("utf-8").splitlines(): c.add_cookie(Soup.Cookie.parse(i))
+        app.session.add_feature(c)
     app.name = app.about.get_application_name()
     app.shortcuts = Shortcuts(shortcuts)
     Action("about", lambda *_: app.about.present(app.get_active_window()))
@@ -123,7 +132,6 @@ def App(args=None, style=None, shortcuts={}, metainfo="", activate=lambda a: (a.
     app.window = Adw.ApplicationWindow(content=Adw.ToastOverlay(), title=app.about.get_application_name())
     app.spinner = Adw.SpinnerPaintable.new(app.window.get_content())
     if data != {}:
-        app.data_folder = Gio.File.new_for_path(os.path.join(GLib.get_user_data_dir(), app.about.get_application_name().lower()))
         if not os.path.exists(app.data_folder.peek_path()): app.data_folder.make_directory_with_parents()
         app.data_file = app.data_folder.get_child(app.about.get_application_name())
         app.data = marshal(app.data_file.load_contents()[1]) if os.path.exists(app.data_file.peek_path()) else data
