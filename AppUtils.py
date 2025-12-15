@@ -51,24 +51,24 @@ Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.ST
 
 class TagRow(Adw.PreferencesRow):
     __gtype_name__ = "TagRow"
-    
+
     @GObject.Property(type=GObject.Strv, flags=GObject.ParamFlags.READWRITE)
     def pinned_tags(self): return self._pinned_tags
     @pinned_tags.setter
     def pinned_tags(self, value):
         self._pinned_tags = value
         GLib.idle_add(self.sync_tags)
-    
+
     @GObject.Property(type=GObject.Strv, flags=GObject.ParamFlags.READWRITE)
     def tags(self): return self._tags
     @tags.setter
     def tags(self, value):
         self._tags = value
         GLib.idle_add(self.sync_tags)
-            
+
     @GObject.Signal(flags=GObject.SignalFlags.RUN_LAST, return_type=bool, arg_types=(Gtk.Widget,), accumulator=GObject.signal_accumulator_true_handled)
     def tag_widget_added(self, *args): return
-    
+
     def __init__(self, tags=[], **kwargs):
         self._tags, self._pinned_tags = tags, []
         self.prompt = EntryDialog(lambda d: (d.tagrow.set_property("tags", d.tagrow.tags + [d.get_extra_child().get_text()]), d.close(), d.tagrow.grab_focus()), heading="New Tag")
@@ -83,7 +83,7 @@ class TagRow(Adw.PreferencesRow):
         self.connect("activate", lambda r: (self.prompt.present(r.get_root()), self.prompt.get_extra_child().grab_focus())[0])
         self.add_css_class("tagrow")
         self.sync_tags()
-        
+
     def sync_tags(self) -> None:
         self.wrapbox.remove_all()
         self.set_child(self.wrapbox if (self._pinned_tags or self._tags) else self.button)
@@ -172,7 +172,7 @@ def Shortcuts(shortcuts: dict) -> Adw.ShortcutsDialog:
         for title, a in shortcuts[section]: _section.add(Adw.ShortcutsItem(title=title, action_name=a if "app." in a else "", accelerator=a if not "app." in a else ""))
         _shortcuts.add(_section)
     return _shortcuts
-    
+
 def Button(t=Gtk.Button, callback=None, icon_name="", bindings=(), **kargs) -> Gtk.Button | Gtk.MenuButton | Gtk.ToggleButton:
     button = t(icon_name=icon_name + "-symbolic" if icon_name else "", **kargs)
     if callback: button.connect("clicked" if type(button) == Gtk.Button else "notify::active", callback)
@@ -242,7 +242,7 @@ def move_thing(value: int, data: tuple) -> None:
         max_value = value - a.get_page_size()
         value = c * (max_value / a.get_page_size())
     data[0].set_value(value)
-    
+
 def Media(uri: Gio.File | None | str, scrollable=False, overlay=False, controls=True, avatar=False, mimetype="", play=True, loading_paintable=None) -> Gtk.Widget:
     if isinstance(uri, str):
         uri = Gio.File.new_for_uri(uri)
@@ -344,9 +344,12 @@ def media_controls(mimetype: str, overlay=False) -> Gtk.MediaControls:
     return controls
 def media_media(picture: Gtk.Widget, media: Gtk.MediaFile) -> None:
     if picture.get_ancestor(Gtk.Overlay) and picture.controls:
-        controls = media_controls("video", picture.get_ancestor(Gtk.Overlay))
-        controls.set_media_stream(media)
-        media.bind_property("has-audio", controls.get_template_child(Gtk.MediaControls, "volume_button"), "visible", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE)
+        if isinstance(picture.controls, Gtk.MediaControls):
+            picture.controls.b.unbind()
+        else:
+            picture.controls = media_controls("video", picture.get_ancestor(Gtk.Overlay))
+        picture.controls.set_media_stream(media)
+        picture.controls.b = media.bind_property("has-audio", picture.controls.get_template_child(Gtk.MediaControls, "volume_button"), "visible", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE)
     picture.media = media
     picture.sig = picture.media.connect("invalidate-contents", lambda p, *_: media_finish(picture, p))
     if picture.play: picture.media.set_properties(playing=True, loop=True)
@@ -449,7 +452,7 @@ def masonrybox_remove_all(m: Adw.BreakpointBin, clear=True) -> None | tuple:
     for i, c in enumerate(box): c.set_visible(m.get_property("width-request") > i)
     for i in m.get_child().get_child().get_child():
         i.height = sum((it.height if hasattr(it, "height") else max(10, it.get_height()) / max(10, it.get_width()) for it in i))
-    return None if clear else children    
+    return None if clear else children
 
 def EntryDialog(callback=None, multiline=False, appearance=Adw.ResponseAppearance.SUGGESTED, **kwargs) -> Adw.AlertDialog:
     dialog = Adw.AlertDialog(extra_child=Gtk.TextView() if multiline else Gtk.Entry(), **kwargs)
@@ -636,7 +639,7 @@ def DonutChart(title: str, values: str, data: dict, colors: tuple, size=350, hol
     for i, v in enumerate(data):
         if data[v] == 0: continue
         legend.append(Adw.Bin(tooltip_text=f"{v} - {data[v]} - {(data[v] / total * 100):05.2f}%"))
-        color = f'rgba({str(colors[i%len(colors)]).strip("()")}, {0.4 if 1 >= i and len(data) == 4 and len(colors) == 2 else 1})'       
+        color = f'rgba({str(colors[i%len(colors)]).strip("()")}, {0.4 if 1 >= i and len(data) == 4 and len(colors) == 2 else 1})'
         style += f"\ndonut-chart legend > widget:nth-child({n + 1}) {{ min-width: 20px; min-height: 20px; border-radius: 100px; background: {color}; }}\n"
         if data[v] == total:
             svg += f'<circle cx="{c}" cy="{c}" r="{(r + hr)/2}" stroke="{color}" stroke-width="{r - hr}" fill="none"/>'
