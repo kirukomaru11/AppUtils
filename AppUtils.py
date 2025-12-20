@@ -118,6 +118,7 @@ def App(args=None, style="", shortcuts={}, metainfo="", activate=lambda a: (a.wi
     if style:
         css.style += "\n" + style
     css.load_from_string(css.style)
+    Gtk.Settings.get_default().bind_property("gtk-interface-color-scheme", css, "prefers-color-scheme", GObject.BindingFlags.DEFAULT | GObject.BindingFlags.SYNC_CREATE)
     app.session = Soup.Session(user_agent=app.about.get_application_name(), max_conns_per_host=10)
     data_cookies = app.data_folder.get_child("cookies")
     if os.path.exists(data_cookies.get_path()):
@@ -130,7 +131,7 @@ def App(args=None, style="", shortcuts={}, metainfo="", activate=lambda a: (a.wi
     Action("shortcuts", lambda *_: app.shortcuts.present(app.get_active_window()), "<primary>question")
     app.default_menu = Menu((("Keyboard Shortcuts", "shortcuts"), (f"About {app.about.get_application_name()}", "about"), ),)
     app.window = Adw.ApplicationWindow(content=Adw.ToastOverlay(), title=app.about.get_application_name())
-    app.spinner = Adw.SpinnerPaintable.new(app.window.get_content())
+    app.spinner = Adw.SpinnerPaintable.new(app.window)
     if data != {}:
         if not os.path.exists(app.data_folder.peek_path()): app.data_folder.make_directory_with_parents()
         app.data_file = app.data_folder.get_child(app.about.get_application_name())
@@ -323,7 +324,9 @@ def load_media(widget: Gtk.Widget, uri: Gio.File | None | str, mimetype="") -> N
     while not (hasattr(w, "set_media_stream") or hasattr(w, "set_paintable") or hasattr(w, "set_custom_image")) and hasattr(w, "get_child"):
         w = w.get_child()
     if mimetype.startswith("image") or mimetype.endswith("zip"):
-        image = Gly.Loader.new_for_bytes(_bytes).load()
+        try:
+            image = Gly.Loader.new_for_bytes(_bytes).load()
+        except: return print(uri.get_uri(), "is not a valid image")
         frame = image.next_frame()
         widget.height = image.get_height() / image.get_width()
         anim = frame.get_delay() > 0
@@ -511,6 +514,8 @@ def data_save(crash=False) -> None:
     app.data_file.replace_contents(marshal_string(app.data), None, True, 0)
 
 def launch(arg: Gio.File | str, folder=False) -> None:
+    if arg.startswith("file://"):
+        arg = Gio.File.new_for_uri(arg)
     if isinstance(arg, Gio.File) or folder:
         if not isinstance(arg, Gio.File):
             arg = Gio.File.new_for_path(arg)
