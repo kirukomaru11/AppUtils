@@ -263,7 +263,7 @@ def Media(uri: Gio.File | None | str, scrollable=False, overlay=False, controls=
     if avatar:
         picture = Adw.Avatar(halign=Gtk.Align.CENTER, size=200, show_initials=True, tooltip_text=avatar, text=avatar)
     if not mimetype.startswith("audio") and not picture:
-        picture = Gtk.Picture(halign=Gtk.Align.CENTER if scrollable else Gtk.Align.FILL)
+        picture = Gtk.Picture(isolate_contents=False, halign=Gtk.Align.CENTER if scrollable else Gtk.Align.FILL)
         picture.play, picture.controls = play, controls
     if picture and not (avatar and not uri):
         if overlay and not scrollable: overlay.set_child(picture)
@@ -657,6 +657,6 @@ def DonutChart(title: str, values: str, data: dict, colors: tuple, size=350, hol
         n += 1
     css.style = donut_replace.sub("", css.style).replace("\n\n", "\n") + "\n" + style.strip("\n\n")
     GLib.idle_add(css.load_from_string, css.style)
-    for i in (Gtk.Picture(tooltip_text=f"{total} {values}", height_request=400, width_request=400, paintable=Gtk.Svg.new_from_bytes(GLib.Bytes.new_take(f"{svg}</svg>".encode("utf-8")))), legend): chart.append(i)
+    for i in (Gtk.Picture(isolate_contents=False, tooltip_text=f"{total} {values}", height_request=400, width_request=400, paintable=Gtk.Svg.new_from_bytes(GLib.Bytes.new_take(f"{svg}</svg>".encode("utf-8")))), legend): chart.append(i)
     for i in (Gtk.Label(halign=Gtk.Align.CENTER, label=title, css_classes=("title-2", )), chart): box.append(i)
     return box
