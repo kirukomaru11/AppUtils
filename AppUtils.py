@@ -514,7 +514,7 @@ def data_save(crash=False) -> None:
     app.data_file.replace_contents(marshal_string(app.data), None, True, 0)
 
 def launch(arg: Gio.File | str, folder=False) -> None:
-    if arg.startswith("file://"):
+    if isinstance(arg, str) and arg.startswith("file://"):
         arg = Gio.File.new_for_uri(arg)
     if isinstance(arg, Gio.File) or folder:
         if not isinstance(arg, Gio.File):
