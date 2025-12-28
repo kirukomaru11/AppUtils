@@ -411,8 +411,7 @@ def scroll_move_shortcuts(widget: Gtk.Widget, args: None, direction: Gtk.Directi
         anim.play()
     return True
 
-def MasonryBox(adapt=((999, 2, Adw.BreakpointConditionLengthType.MAX_WIDTH), (1000, 3, Adw.BreakpointConditionLengthType.MIN_WIDTH), (1200, 4, Adw.BreakpointConditionLengthType.MIN_WIDTH)), activate=None) -> Adw.BreakpointBin:
-    box = Gtk.Box(css_name="view", homogeneous=True)
+def MasonryBox(adapt=((999, 2, Adw.BreakpointConditionLengthType.MAX_WIDTH), (1200, 4, Adw.BreakpointConditionLengthType.MIN_WIDTH), (1000, 3, Adw.BreakpointConditionLengthType.MIN_WIDTH)), activate=None) -> Adw.BreakpointBin:    box = Gtk.Box(css_name="view", homogeneous=True)
     for _ in range(max((i[1] for i in adapt))): box.append(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_name="column", valign=Gtk.Align.START))
     masonrybox = Adw.BreakpointBin(focusable=True, child=Gtk.ScrolledWindow(child=Gtk.Viewport(child=box, scroll_to_focus=False, vscroll_policy=Gtk.ScrollablePolicy.NATURAL), hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_width=True), width_request=1, height_request=1, css_name="masonrybox")
     masonrybox.connect("notify::width-request", masonrybox_update)
